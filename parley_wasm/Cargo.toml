@@ -1,0 +1,23 @@
+[package]
+name = "parley_wasm"
+version = "0.1.0"
+edition = "2024"
+license = "Apache-2.0 OR MIT"
+description = "WebAssembly Component Model text editor built on Parley for Servo."
+
+[workspace]
+
+[lib]
+crate-type = ["cdylib"]
+
+[dependencies]
+parley = { path = "../parley", default-features = false, features = ["std"] }
+fontique = { path = "../fontique", default-features = false, features = ["std"] }
+linebender_resource_handle = { version = "0.1.1", default-features = false }
+wit-bindgen = "0.44"
+
+[profile.release]
+opt-level = "s"
+lto = true
+codegen-units = 1
+strip = true
