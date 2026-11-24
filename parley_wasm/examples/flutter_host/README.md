@@ -8,12 +8,10 @@ paths or macOS sandbox issues).
 
 ## 1. (Optional) Rebuild `parley.wasm`
 
-`parley_wasm/.cargo/config.toml` defaults to `wasm32-unknown-unknown`, so:
-
 ```sh
 cd ../.. # parley_wasm/
 rustup target add wasm32-unknown-unknown
-cargo build --release
+cargo build --release --target wasm32-unknown-unknown
 wasm-tools component new \
   target/wasm32-unknown-unknown/release/parley_wasm.wasm \
   -o examples/flutter_host/assets/parley.wasm
