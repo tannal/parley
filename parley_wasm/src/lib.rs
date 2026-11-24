@@ -130,35 +130,36 @@ impl ParleyEditorState {
         let mut font_cx = FontContext::new();
         let mut blob_to_host_font = HashMap::new();
 
-        // Request primary sans-serif + CJK + Emoji fonts from Servo's FontContext.
-        let families_to_request: &[&[&str]] = &[
-            &[
-                "Inter",
-                "Noto Sans",
-                "DejaVu Sans",
-                "Liberation Sans",
-                "Ubuntu",
-                "sans-serif",
-            ],
-            &[
-                "Noto Sans CJK SC",
-                "Noto Sans CJK JP",
-                "WenQuanYi Micro Hei",
-                "WenQuanYi Zen Hei",
-                "IPAGothic",
-                "PingFang SC",
-                "Microsoft YaHei",
-            ],
-            &["Noto Color Emoji", "Apple Color Emoji", "Segoe UI Emoji"],
+        // Request primary sans-serif plus OS-resolved fallback fonts for CJK,
+        // Japanese, Korean, Emoji, Arabic, and Hebrew via Servo's FontContext.
+        let queries: &[(&[&str], Option<char>)] = &[
+            (
+                &[
+                    "Inter",
+                    "Noto Sans",
+                    "DejaVu Sans",
+                    "Liberation Sans",
+                    "Ubuntu",
+                    "sans-serif",
+                ],
+                None,
+            ),
+            (&["sans-serif"], Some('中')),
+            (&["sans-serif"], Some('あ')),
+            (&["sans-serif"], Some('한')),
+            (&["sans-serif"], Some('😀')),
+            (&["sans-serif"], Some('ع')),
+            (&["sans-serif"], Some('א')),
         ];
 
         let mut registered_families = Vec::new();
-        for stack in families_to_request {
+        for &(stack, sample_char) in queries {
             let query = FontQuery {
                 families: stack.iter().map(|s| (*s).to_string()).collect(),
                 weight: 400.0,
                 stretch: 1.0,
                 italic: false,
+                sample_char,
             };
             let Some(resolved) = fonts::resolve(&query) else {
                 continue;
