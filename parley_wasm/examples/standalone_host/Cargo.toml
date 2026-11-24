@@ -1,0 +1,13 @@
+[package]
+name = "parley_standalone_host"
+version = "0.1.0"
+edition = "2024"
+license = "Apache-2.0 OR MIT"
+description = "Zero-Servo standalone Wasmtime + vello_cpu host running parley.wasm and rendering to PNG."
+
+[workspace]
+
+[dependencies]
+wasmtime = { version = "49.0.0", default-features = false, features = ["runtime", "component-model", "cranelift", "std"] }
+vello_cpu = { version = "0.2.0", default-features = false, features = ["std", "u8_pipeline", "text", "png"] }
+peniko = { version = "0.6.1", default-features = false, features = ["std"] }
