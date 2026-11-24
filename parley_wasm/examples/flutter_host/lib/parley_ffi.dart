@@ -3,10 +3,10 @@ import 'dart:ffi';
 import 'dart:io';
 import 'dart:typed_data';
 
-typedef _NewNative = Pointer<Void> Function(
-    Pointer<Uint8>, Pointer<Uint8>, Float, Float);
-typedef _NewDart = Pointer<Void> Function(
-    Pointer<Uint8>, Pointer<Uint8>, double, double);
+typedef _NewFromBytesNative = Pointer<Void> Function(
+    Pointer<Uint8>, IntPtr, Pointer<Uint8>, Float, Float);
+typedef _NewFromBytesDart = Pointer<Void> Function(
+    Pointer<Uint8>, int, Pointer<Uint8>, double, double);
 
 typedef _FreeNative = Void Function(Pointer<Void>);
 typedef _FreeDart = void Function(Pointer<Void>);
@@ -36,10 +36,11 @@ typedef _DimDart = int Function(Pointer<Void>);
 
 /// Thin `dart:ffi` wrapper around `libparley_flutter_host`, which embeds
 /// Wasmtime + `vello_cpu` and executes the exact same `parley.wasm` component
-/// used by Servo.
+/// used by Servo. Works on macOS, iOS (static lib + Pulley), Linux, Windows,
+/// and Android.
 class ParleyWasmBridge {
   late final DynamicLibrary _lib;
-  late final _NewDart _new;
+  late final _NewFromBytesDart _newFromBytes;
   late final _FreeDart _free;
   late final _StrDart _insertText;
   late final _StrDart _composeUpdate;
@@ -54,15 +55,16 @@ class ParleyWasmBridge {
 
   Pointer<Void> _handle = nullptr;
 
-  ParleyWasmBridge({
-    required String libPath,
-    required String wasmPath,
+  ParleyWasmBridge.fromBytes({
+    required Uint8List wasmBytes,
     required String initialText,
     required double width,
     required double height,
+    String? libPath,
   }) {
-    _lib = DynamicLibrary.open(libPath);
-    _new = _lib.lookupFunction<_NewNative, _NewDart>('parley_host_new');
+    _lib = _openLibrary(libPath);
+    _newFromBytes = _lib.lookupFunction<_NewFromBytesNative, _NewFromBytesDart>(
+        'parley_host_new_from_bytes');
     _free = _lib.lookupFunction<_FreeNative, _FreeDart>('parley_host_free');
     _insertText =
         _lib.lookupFunction<_StrNative, _StrDart>('parley_host_insert_text');
@@ -83,27 +85,60 @@ class ParleyWasmBridge {
     _width = _lib.lookupFunction<_DimNative, _DimDart>('parley_host_width');
     _height = _lib.lookupFunction<_DimNative, _DimDart>('parley_host_height');
 
-    final wasmC = _allocUtf8(wasmPath);
+    final wasmPtr = _allocBytes(wasmBytes);
     final initC = _allocUtf8(initialText);
     try {
-      _handle = _new(wasmC, initC, width, height);
+      _handle = _newFromBytes(wasmPtr, wasmBytes.length, initC, width, height);
     } finally {
-      _freeBytes(wasmC);
+      _freeBytes(wasmPtr);
       _freeBytes(initC);
     }
     if (_handle == nullptr) {
-      throw StateError('Failed to instantiate parley.wasm from $wasmPath');
+      throw StateError('Failed to instantiate parley.wasm component bytes');
     }
   }
 
-  static String defaultLibPath() {
-    if (Platform.isLinux) {
-      return 'native/target/release/libparley_flutter_host.so';
+  static DynamicLibrary _openLibrary(String? overridePath) {
+    if (overridePath != null && overridePath.isNotEmpty) {
+      return DynamicLibrary.open(overridePath);
     }
-    if (Platform.isMacOS) {
-      return 'native/target/release/libparley_flutter_host.dylib';
+    if (Platform.isIOS) {
+      // On iOS, `libparley_flutter_host.a` is statically linked into Runner.
+      return DynamicLibrary.process();
     }
-    return 'native/target/release/parley_flutter_host.dll';
+    final envPath = Platform.environment['PARLEY_HOST_LIB'];
+    if (envPath != null && envPath.isNotEmpty) {
+      return DynamicLibrary.open(envPath);
+    }
+
+    final candidates = <String>[
+      if (Platform.isMacOS) ...[
+        'libparley_flutter_host.dylib',
+        '${File(Platform.resolvedExecutable).parent.path}/../Frameworks/libparley_flutter_host.dylib',
+        'native/target/release/libparley_flutter_host.dylib',
+      ] else if (Platform.isLinux) ...[
+        'libparley_flutter_host.so',
+        'native/target/release/libparley_flutter_host.so',
+      ] else if (Platform.isAndroid) ...[
+        'libparley_flutter_host.so',
+      ] else if (Platform.isWindows) ...[
+        'parley_flutter_host.dll',
+        'native/target/release/parley_flutter_host.dll',
+      ],
+    ];
+
+    Object? lastError;
+    for (final path in candidates) {
+      try {
+        return DynamicLibrary.open(path);
+      } catch (e) {
+        lastError = e;
+      }
+    }
+    throw StateError(
+      'Could not load libparley_flutter_host (tried: ${candidates.join(', ')}).\n'
+      'Last error: $lastError',
+    );
   }
 
   bool insertText(String text) => _callStr(_insertText, text);
@@ -151,12 +186,18 @@ class ParleyWasmBridge {
     }
   }
 
-  static final _malloc = DynamicLibrary.process()
-      .lookupFunction<Pointer<Uint8> Function(IntPtr),
-          Pointer<Uint8> Function(int)>('malloc');
-  static final _libcFree = DynamicLibrary.process()
-      .lookupFunction<Void Function(Pointer<Uint8>),
-          void Function(Pointer<Uint8>)>('free');
+  static final _malloc = DynamicLibrary.process().lookupFunction<
+      Pointer<Uint8> Function(IntPtr),
+      Pointer<Uint8> Function(int)>('malloc');
+  static final _libcFree = DynamicLibrary.process().lookupFunction<
+      Void Function(Pointer<Uint8>),
+      void Function(Pointer<Uint8>)>('free');
+
+  static Pointer<Uint8> _allocBytes(Uint8List bytes) {
+    final ptr = _malloc(bytes.length);
+    ptr.asTypedList(bytes.length).setAll(0, bytes);
+    return ptr;
+  }
 
   static Pointer<Uint8> _allocUtf8(String s) {
     final bytes = utf8.encode(s);

@@ -2,6 +2,7 @@ import 'dart:async';
 import 'dart:ui' as ui;
 
 import 'package:flutter/gestures.dart';
+// ignore: deprecated_member_use
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
@@ -22,10 +23,9 @@ class ParleyFlutterApp extends StatelessWidget {
       theme: ThemeData.dark(useMaterial3: true),
       home: const Scaffold(
         backgroundColor: Color(0xFF0F172A),
-        body: Center(
-          child: SizedBox(
-            width: 960,
-            height: 640,
+        body: SafeArea(
+          child: Padding(
+            padding: EdgeInsets.all(16),
             child: ParleyEditorWidget(),
           ),
         ),
@@ -48,20 +48,30 @@ class _ParleyEditorWidgetState extends State<ParleyEditorWidget> {
   Timer? _blinkTimer;
   bool _cursorVisible = true;
   String? _error;
+  Size _lastSize = const Size(800, 560);
 
   @override
   void initState() {
     super.initState();
+    _initWasm();
+  }
+
+  Future<void> _initWasm() async {
     try {
-      _bridge = ParleyWasmBridge(
-        libPath: ParleyWasmBridge.defaultLibPath(),
-        wasmPath: '../../target/parley.wasm',
+      final data = await rootBundle.load('assets/parley.wasm');
+      final wasmBytes = data.buffer.asUint8List(
+        data.offsetInBytes,
+        data.lengthInBytes,
+      );
+      if (!mounted) return;
+      _bridge = ParleyWasmBridge.fromBytes(
+        wasmBytes: wasmBytes,
         initialText: 'Parley.wasm Running Inside Flutter!\n\n'
             'The EXACT SAME wasm32-unknown-unknown Component Model binary '
             'from Servo is rendering here via dart:ffi + Wasmtime + vello_cpu.\n\n'
-            '你好，世界！Click, drag to select, type, or use Ctrl+Z / Ctrl+Shift+Z.',
-        width: 960,
-        height: 640,
+            '你好，世界！Click/tap, drag to select, type, or use Cmd/Ctrl+Z.',
+        width: _lastSize.width,
+        height: _lastSize.height,
       );
       _refreshFrame();
       _blinkTimer = Timer.periodic(const Duration(milliseconds: 530), (_) {
@@ -72,8 +82,11 @@ class _ParleyEditorWidgetState extends State<ParleyEditorWidget> {
         }
       });
     } catch (e) {
-      _error = '$e\n\nBuild the Rust FFI host first:\n'
-          '  cd native && cargo build --release';
+      if (!mounted) return;
+      setState(() {
+        _error = '$e\n\nBuild the Rust FFI host first:\n'
+            '  cd native && cargo build --release';
+      });
     }
   }
 
@@ -164,50 +177,67 @@ class _ParleyEditorWidgetState extends State<ParleyEditorWidget> {
       );
     }
 
-    return KeyboardListener(
-      focusNode: _focusNode,
-      autofocus: true,
-      onKeyEvent: _handleKey,
-      child: Listener(
-        onPointerDown: (e) {
-          _focusNode.requestFocus();
-          if (_bridge?.pointerDown(
-                e.localPosition.dx,
-                e.localPosition.dy,
-                shift: HardwareKeyboard.instance.isShiftPressed,
-              ) ??
-              false) {
-            _refreshFrame();
+    return LayoutBuilder(
+      builder: (context, constraints) {
+        final w = constraints.maxWidth.clamp(100.0, 2000.0);
+        final h = constraints.maxHeight.clamp(100.0, 2000.0);
+        if ((w - _lastSize.width).abs() > 1 ||
+            (h - _lastSize.height).abs() > 1) {
+          _lastSize = Size(w, h);
+          if (_bridge != null && _bridge!.resize(w, h)) {
+            WidgetsBinding.instance.addPostFrameCallback((_) => _refreshFrame());
           }
-        },
-        onPointerMove: (e) {
-          if (_bridge?.pointerMove(e.localPosition.dx, e.localPosition.dy) ??
-              false) {
-            _refreshFrame();
-          }
-        },
-        onPointerUp: (_) => _bridge?.pointerUp(),
-        onPointerSignal: (signal) {
-          if (signal is PointerScrollEvent) {
-            if (_bridge?.scroll(signal.scrollDelta.dy) ?? false) {
-              _refreshFrame();
-            }
-          }
-        },
-        child: MouseRegion(
-          cursor: SystemMouseCursors.text,
-          child: Container(
-            decoration: BoxDecoration(
-              border: Border.all(color: const Color(0xFF334155)),
-              borderRadius: BorderRadius.circular(12),
+        }
+
+        return KeyboardListener(
+          focusNode: _focusNode,
+          autofocus: true,
+          onKeyEvent: _handleKey,
+          child: Listener(
+            onPointerDown: (e) {
+              _focusNode.requestFocus();
+              if (_bridge?.pointerDown(
+                    e.localPosition.dx,
+                    e.localPosition.dy,
+                    shift: HardwareKeyboard.instance.isShiftPressed,
+                  ) ??
+                  false) {
+                _refreshFrame();
+              }
+            },
+            onPointerMove: (e) {
+              if (_bridge?.pointerMove(
+                    e.localPosition.dx,
+                    e.localPosition.dy,
+                  ) ??
+                  false) {
+                _refreshFrame();
+              }
+            },
+            onPointerUp: (_) => _bridge?.pointerUp(),
+            onPointerSignal: (signal) {
+              if (signal is PointerScrollEvent) {
+                if (_bridge?.scroll(signal.scrollDelta.dy) ?? false) {
+                  _refreshFrame();
+                }
+              }
+            },
+            child: MouseRegion(
+              cursor: SystemMouseCursors.text,
+              child: Container(
+                decoration: BoxDecoration(
+                  border: Border.all(color: const Color(0xFF334155)),
+                  borderRadius: BorderRadius.circular(12),
+                ),
+                clipBehavior: Clip.antiAlias,
+                child: _frameImage == null
+                    ? const Center(child: CircularProgressIndicator())
+                    : RawImage(image: _frameImage, fit: BoxFit.fill),
+              ),
             ),
-            clipBehavior: Clip.antiAlias,
-            child: _frameImage == null
-                ? const Center(child: CircularProgressIndicator())
-                : RawImage(image: _frameImage, fit: BoxFit.fill),
           ),
-        ),
-      ),
+        );
+      },
     );
   }
 }

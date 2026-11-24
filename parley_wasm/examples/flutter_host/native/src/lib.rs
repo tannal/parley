@@ -42,6 +42,9 @@ impl FlutterHostState {
             "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf",
             "/usr/share/fonts/truetype/liberation/LiberationSans-Regular.ttf",
             "/System/Library/Fonts/Helvetica.ttc",
+            "/System/Library/Fonts/SFNS.ttf",
+            "/System/Library/Fonts/Core/Helvetica.ttc",
+            "/System/Library/Fonts/Core/SFUI.ttf",
             "C:\\Windows\\Fonts\\segoeui.ttf",
         ]) {
             fonts.insert(
@@ -54,6 +57,8 @@ impl FlutterHostState {
             "/usr/share/fonts/opentype/noto/NotoSansCJK-Regular.ttc",
             "/usr/share/fonts/truetype/wqy/wqy-microhei.ttc",
             "/System/Library/Fonts/PingFang.ttc",
+            "/System/Library/Fonts/STHeiti Light.ttc",
+            "/System/Library/Fonts/LanguageSupport/PingFang.ttc",
             "C:\\Windows\\Fonts\\msyh.ttc",
         ]) {
             fonts.insert(
@@ -172,23 +177,23 @@ fn cstr_to_str<'a>(ptr: *const c_char) -> &'a str {
     unsafe { CStr::from_ptr(ptr) }.to_str().unwrap_or("")
 }
 
-#[unsafe(no_mangle)]
-pub extern "C" fn parley_host_new(
-    wasm_path: *const c_char,
-    initial_text: *const c_char,
+fn instantiate_from_bytes(
+    wasm_bytes: &[u8],
+    initial_text: &str,
     width: f32,
     height: f32,
 ) -> *mut ParleyFlutterHost {
-    let wasm_path = cstr_to_str(wasm_path);
-    let initial_text = cstr_to_str(initial_text);
-
     let mut config = Config::new();
     config.wasm_component_model(true);
+    #[cfg(target_os = "ios")]
+    {
+        let _ = config.target("pulley64");
+    }
     let Ok(engine) = Engine::new(&config) else {
         return std::ptr::null_mut();
     };
-    let Ok(component) = Component::from_file(&engine, wasm_path) else {
-        eprintln!("[Flutter Parley] failed to load component: {wasm_path}");
+    let Ok(component) = Component::from_binary(&engine, wasm_bytes) else {
+        eprintln!("[Flutter Parley] failed to compile component bytes");
         return std::ptr::null_mut();
     };
     let mut linker = Linker::new(&engine);
@@ -210,6 +215,36 @@ pub extern "C" fn parley_host_new(
     }
 
     Box::into_raw(Box::new(ParleyFlutterHost { store, instance }))
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn parley_host_new_from_bytes(
+    wasm_ptr: *const u8,
+    wasm_len: usize,
+    initial_text: *const c_char,
+    width: f32,
+    height: f32,
+) -> *mut ParleyFlutterHost {
+    if wasm_ptr.is_null() || wasm_len == 0 {
+        return std::ptr::null_mut();
+    }
+    let bytes = unsafe { std::slice::from_raw_parts(wasm_ptr, wasm_len) };
+    instantiate_from_bytes(bytes, cstr_to_str(initial_text), width, height)
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn parley_host_new(
+    wasm_path: *const c_char,
+    initial_text: *const c_char,
+    width: f32,
+    height: f32,
+) -> *mut ParleyFlutterHost {
+    let wasm_path = cstr_to_str(wasm_path);
+    let Ok(bytes) = fs::read(wasm_path) else {
+        eprintln!("[Flutter Parley] failed to read wasm file: {wasm_path}");
+        return std::ptr::null_mut();
+    };
+    instantiate_from_bytes(&bytes, cstr_to_str(initial_text), width, height)
 }
 
 #[unsafe(no_mangle)]
